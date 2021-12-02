@@ -1,3 +1,4 @@
+import socket
 import socketserver
 import subprocess
 import threading
@@ -10,29 +11,52 @@ from .utils import bytes2int
 
 log: Logger = get_logger()
 
+Callback = Callable[[], None]
 BytesConsumer = Callable[[bytes], None]
+IntProvider = Callable[[], int]
 IntBytesConsumer = Callable[[int, bytes], None]
 
 
 class SocketHandler(socketserver.StreamRequestHandler):
     on_receive: BytesConsumer
+    on_ole: Callback
+    on_closed: Callback
+    output_limit_provider: IntProvider
 
-    def __init__(self, on_receive: BytesConsumer, *args):
+    def __init__(self, on_receive: BytesConsumer, on_ole: Callback, on_closed: Callback,
+                 output_limit_provider: IntProvider, *args):
         super().__init__(*args)
         self.on_receive = on_receive
+        self.on_ole = on_ole
+        self.on_closed = on_closed
+        self.output_limit_provider = output_limit_provider
 
     def handle(self) -> None:
         log.info("Handling AI connection from %s", self.client_address)
-        while True:
-            pack_size = bytes2int(self.rfile.read(4))
-            data = self.rfile.read(pack_size)
-            log.debug("Received data from %s: %s", self.client_address, data.decode("utf-8"))
-            self.on_receive(data)
+        try:
+            while True:
+                pack_size = bytes2int(self.rfile.read(4))
+                output_limit = self.output_limit_provider()
+                if pack_size > output_limit:
+                    log.error("AI exceeded output limit: %d > %d", pack_size, output_limit)
+                    self.on_ole()
+                    return
+
+                data = self.rfile.read(pack_size)
+                log.debug("Received data from %s: %s", self.client_address, data.decode("utf-8"))
+                self.on_receive(data)
+        except socket.error:
+            log.exception("AI Channel is closed due to exception")
+            self.on_closed()
 
     def send(self, data: bytes) -> None:
         log.debug("Sending data to %s: %s", self.client_address, data.decode("utf-8"))
-        self.wfile.write(data)
-        self.wfile.flush()
+        try:
+            self.wfile.write(data)
+            self.wfile.flush()
+        except socket.error:
+            log.exception("AI Channel is closed due to exception")
+            self.on_closed()
 
 
 class AICommunicationChannel:

@@ -27,6 +27,7 @@ class Judger:
     listen_target: [int]
     timer: Optional[threading.Timer]
     round_time_limit: int
+    output_limit: int
     state: int
 
     def __init__(self, **kwargs):
@@ -45,11 +46,16 @@ class Judger:
 
         self.listen_target = []
         self.round_time_limit = 3
+        self.output_limit = 2048
         self.state = -1
 
         def initHandler(*args) -> socketserver.BaseRequestHandler:
             player_id = len(self.players)
-            handler = AICommunicationChannel(lambda data: self.__on_ai_data(player_id, data), *args)
+            handler = AICommunicationChannel(
+                lambda data: self.__on_ai_data(player_id, data),
+                lambda: self.__on_ai_ole(player_id),
+                lambda: self.__on_ai_closed(player_id),
+                *args)
             self.players.append(handler)
             if len(self.players) == self.player_count:
                 self.__start_game()
@@ -59,12 +65,21 @@ class Judger:
         self.server = ThreadingTCPServer((host, port), initHandler)
         self.players = []
 
+    def get_output_limit(self) -> int:
+        return self.output_limit
+
     def __on_ai_data(self, ai_id: int, data: bytes) -> None:
         if self.listen_target.count(ai_id) == 0:
             log.warning("Received data from ai which is not listened.")
         else:
             log.info("Received data from listened ai. Forwarding to logic.")
             self.logic.send(data)
+
+    def __on_ai_ole(self, ai_id: int) -> None:
+        self.logic.send(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.OutputLimitError))
+
+    def __on_ai_closed(self, ai_id: int) -> None:
+        self.logic.send(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.RunError))
 
     def __check_state_change(self, new_state: int) -> None:
         if self.state != new_state:
