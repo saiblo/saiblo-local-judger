@@ -6,6 +6,7 @@ from socketserver import ThreadingTCPServer
 from typing import List, Optional
 
 from .comm import AICommunicationChannel, LogicCommunicationChannel
+from .exception import JudgerIllegalState
 from .logger import get_logger
 from .protocol import Protocol, RoundConfig, RoundInfo, AiErrorType
 
@@ -37,7 +38,7 @@ class Judger:
             v = kwargs.get(name)
             if v is None:
                 log.error("Missing init config: %s", name)
-                exit(1)
+                raise JudgerIllegalState
             return v
 
         self.player_count = getValue("player_count")
@@ -79,9 +80,11 @@ class Judger:
             self.logic.send(data)
 
     def __on_ai_ole(self, ai_id: int) -> None:
+        log.warning("AI %d exceeded output limit %d", ai_id, self.output_limit)
         self.logic.send(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.OutputLimitError))
 
     def __on_ai_closed(self, ai_id: int) -> None:
+        log.warning("AI %d disconnected unexpectedly", ai_id)
         self.logic.send(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.RunError))
 
     def __check_state_change(self, new_state: int) -> None:
@@ -99,17 +102,19 @@ class Judger:
             if isinstance(message, RoundConfig):
                 log.info("Round config received")
                 if self.round_time_limit != message.time:
-                    log.info("Resetting round time limit to %s", message.time)
+                    log.info("Reset round time limit to %s", message.time)
                     self.round_time_limit = message.time
                 self.__check_state_change(message.state)
                 # We currently ignore length limit
             elif isinstance(message, RoundInfo):
                 log.info("Normal round information received")
+                if len(message.player) != len(message.content):
+                    log.error("Player count %d is not equal to content count %d. "
+                              "Judger will ignore this message currently",
+                              len(message.player), len(message.content))
+                    return
                 self.__check_state_change(message.state)
                 log.info("Now listening on player %s", str(message.listen))
-                if len(message.player) != len(message.content):
-                    log.error("Player count %d is not equal to content count %d", len(message.player),
-                              len(message.content))
                 for i in range(len(message.player)):
                     ai_id = message.player[i]
                     self.players[ai_id].send(message.content[i].encode("utf-8"))
@@ -118,16 +123,15 @@ class Judger:
                 self.game_running = False
                 self.shutdown()
             else:
-                log.error("Unrecognized logic data type: %s", data.decode("utf-8"))
-                raise ValueError
+                log.error("Unrecognized logic data: %s. Ignoring.", data.decode("utf-8"))
         elif list(range(self.player_count)).count(target_id):
             log.info("Directly forwarding data to AI %d", target_id)
             self.players[target_id].send(data)
         else:
-            log.error("Invalid target id %d", target_id)
-            raise ValueError
+            log.error("Invalid target id %d. Ignoring.", target_id)
 
     def __start_game(self) -> None:
+        log.info("The number of players is sufficient. LINK START!")
         self.logic = LogicCommunicationChannel(self.__on_logic_data, self.output_dir, self.logic_path)
         self.logic.send(
             Protocol.to_logic_init_info([1 for _ in range(self.player_count)], self.config, self.replay_path))

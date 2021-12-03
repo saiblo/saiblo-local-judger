@@ -1,13 +1,16 @@
 import argparse
 import json
-import os.path
 import random
+import sys
 from json import JSONDecodeError
+from pathlib import Path
 
+from .exception import JudgerIllegalState
 from .judger import Judger
-from .logger import get_logger
+from .logger import get_logger, set_log_output_file
 
 log = get_logger()
+version = "v0.0.1-alpha"
 
 
 def main():
@@ -48,12 +51,27 @@ def main():
     if not output:
         output = "res-{:010d}".format(random.randrange(0, 10000000000))
 
-    if not os.path.exists(output):
-        os.makedirs(output)
-
-    if not os.path.isdir(output):
-        log.error("Output should be a directory")
+    output_dir = Path(output)
+    # Make sure output directory is existed
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except IOError:
+        log.exception("Cannot access output directory")
         exit(1)
+
+    set_log_output_file(output_dir)
+
+    log.info("SaibloLocalJudger %s", version)
+
+    # Register global exception.py handler
+    def exception_handler(exctype, value, traceback):
+        if exctype == JudgerIllegalState:
+            log.error("SaibloLocalJudger is existing due to unrecoverable illegal state. "
+                      "Please check the log to find the reason.")
+        else:
+            log.exception("SaibloLocalJudger crashed unexpectedly. Please report this issue.")
+
+    sys.excepthook = exception_handler
 
     judger_config = {
         "port": port,
@@ -63,5 +81,5 @@ def main():
         "logic_path": logic_path,
         "protocol_version": protocol_version
     }
-    log.info("Starting local judger with config[%s]", judger_config)
+    log.info("Launching local judger with config[%s]", judger_config)
     Judger(**judger_config).start()
