@@ -2,7 +2,7 @@ import functools
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Union, List, TypeVar, ParamSpec
+from typing import Callable, Union, List, TypeVar
 
 from .logger import get_logger
 from .utils import int2bytes
@@ -58,11 +58,8 @@ def json_object_receiver(desc):
     return inner
 
 
-P = ParamSpec('P')
-
-
-def json_object_sender(func: Callable[P, any]) -> Callable[P, bytes]:
-    def wrapper(*args: P.args) -> bytes:
+def json_object_sender(func: Callable[[any], any]) -> Callable[[any], bytes]:
+    def wrapper(*args) -> bytes:
         obj = func(*args)
         json_str: str = json.dumps(obj)
         json_bytes: bytes = json_str.encode("utf-8")
