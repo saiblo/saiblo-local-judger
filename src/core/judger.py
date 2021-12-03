@@ -24,11 +24,13 @@ class Judger:
     players: List[AICommunicationChannel]
     logic: LogicCommunicationChannel
     # Game state
+    logic_listener_thread: threading.Thread
     listen_target: [int]
     timer: Optional[threading.Timer]
     round_time_limit: int
     output_limit: int
     state: int
+    game_running: bool
 
     def __init__(self, **kwargs):
         def getValue(name):
@@ -48,6 +50,7 @@ class Judger:
         self.round_time_limit = 3
         self.output_limit = 2048
         self.state = -1
+        self.game_running = False
 
         def initHandler(*args) -> socketserver.BaseRequestHandler:
             player_id = len(self.players)
@@ -112,6 +115,7 @@ class Judger:
                     self.players[ai_id].send(message.content[i].encode("utf-8"))
             elif type(message) == list:
                 log.info("Game over. Result: %s", str(message))
+                self.game_running = False
                 self.shutdown()
             else:
                 log.error("Unrecognized logic data type: %s", data.decode("utf-8"))
@@ -127,14 +131,29 @@ class Judger:
         self.logic = LogicCommunicationChannel(self.__on_logic_data, self.output_dir, self.logic_path)
         self.logic.send(
             Protocol.to_logic_init_info([1 for _ in range(self.player_count)], self.config, self.replay_path))
+        self.logic_listener_thread = threading.Thread(target=self.logic_listener)
+        self.game_running = True
 
     def __round_timeout(self) -> None:
         if len(self.listen_target) > 0:
             timeout_ai = self.listen_target[0]
             log.warning("AI %d listen timeout", timeout_ai)
             self.logic.send(Protocol.to_logic_ai_error(timeout_ai, self.state, AiErrorType.TimeOutError))
-        else:
+        elif self.game_running:
             log.warning("Timeout but no listen target set. This may be an internal bug.")
+
+    def __logic_exit(self, return_code: int):
+        if self.game_running:
+            if return_code == 0:
+                log.warning("Logic exit normally before game over")
+            else:
+                log.error("Logic crashed with exit code: %d", return_code)
+            self.game_running = False
+            self.shutdown()
+
+    def logic_listener(self) -> None:
+        return_code = self.logic.logic_proc.wait()
+        self.__logic_exit(return_code)
 
     def start(self):
         ip, port = self.server.server_address
