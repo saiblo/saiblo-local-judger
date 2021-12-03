@@ -33,7 +33,7 @@ class AiErrorType(Enum):
 
 EndInfo = List[int]
 
-ValueAccessor = Union[Callable[[str], any], Callable[[str, bool], any]]
+ValueAccessor = Callable[[str], any]
 
 T = TypeVar('T')
 
@@ -44,9 +44,9 @@ def json_object_receiver(desc):
         def wrapper(data: bytes) -> T:
             json_obj = json.loads(data.decode("utf-8"))
 
-            def value(key: str, required: bool = True) -> any:
+            def value(key: str) -> any:
                 v = json_obj.get(key)
-                if required and v is None:
+                if v is None:
                     log.error("Missing [%s] in %s", key, desc)
                     raise ValueError
                 return v
@@ -92,10 +92,10 @@ class Protocol:
                     break
                 scores.append(score)
             return scores
-        elif value("time", False) is None:
-            return RoundInfo(value("state"), value("listen"), value("player"), value("content"))
-        else:
+        elif value("state") == 0:
             return RoundConfig(value("state"), value("time"), value("length"))
+        else:
+            return RoundInfo(value("state"), value("listen"), value("player"), value("content"))
 
     @staticmethod
     @json_object_sender
