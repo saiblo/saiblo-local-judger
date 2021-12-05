@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from pathlib import Path
 
 parser = argparse.ArgumentParser(prog="python -m adapter")
 parser.add_argument("judger_ip", type=str, help="IP address of local judger server")
@@ -19,15 +20,25 @@ async def bridge_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         await writer.drain()
 
 
+async def wait_process(proc: asyncio.subprocess.Process):
+    return_code = await proc.wait()
+    print("AI process exited: ", return_code)
+
+
 async def main():
     ai_proc = await asyncio.create_subprocess_shell(
-        ai_path,
+        str(Path.cwd() / ai_path),
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE)
+        stderr=None,
+    )
+    print("Launched AI process")
     (socket_reader, socket_writer) = await asyncio.open_connection(judger_ip, judger_port)
+    print("Connected to local judger")
     await asyncio.gather(
-        asyncio.create_task(bridge_stream(ai_proc.stdout, socket_writer)),
-        asyncio.create_task(bridge_stream(socket_reader, ai_proc.stdin)),
+        bridge_stream(ai_proc.stdout, socket_writer),
+        bridge_stream(socket_reader, ai_proc.stdin),
+        wait_process(ai_proc),
         return_exceptions=True
     )
 

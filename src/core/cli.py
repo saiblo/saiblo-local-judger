@@ -7,9 +7,8 @@ from pathlib import Path
 
 from .exception import JudgerIllegalState
 from .judger import Judger
-from .logger import get_logger, set_log_output_file
+from .logger import LOG, set_log_output_file
 
-log = get_logger()
 version = "v0.0.1-alpha"
 
 
@@ -34,7 +33,7 @@ def main():
     config_file = args.configFile
     output = args.output
     logic_path = require_not_none(args.logicPath)
-    protocol_version = args.protocolVesion
+    protocol_version = args.protocolVersion
 
     config = {}
     if config_file:
@@ -42,34 +41,36 @@ def main():
             with open(config_file, "r") as configFilePtr:
                 config = json.load(configFilePtr)
         except IOError:
-            log.exception("Failed to access config file %s", config_file)
+            LOG.exception("Failed to access config file %s", config_file)
             exit(1)
         except JSONDecodeError:
-            log.exception("Failed to parse json in config file [{}]".format(config_file))
+            LOG.exception("Failed to parse json in config file [{}]".format(config_file))
             exit(1)
 
     if not output:
         output = "res-{:010d}".format(random.randrange(0, 10000000000))
 
-    output_dir = Path(output)
+    output_dir = Path.cwd() / output
     # Make sure output directory is existed
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
     except IOError:
-        log.exception("Cannot access output directory")
+        LOG.exception("Cannot access output directory")
         exit(1)
 
     set_log_output_file(output_dir)
 
-    log.info("SaibloLocalJudger %s", version)
+    LOG.info("SaibloLocalJudger %s", version)
 
     # Register global exception.py handler
     def exception_handler(exctype, value, traceback):
         if exctype == JudgerIllegalState:
-            log.error("SaibloLocalJudger is existing due to unrecoverable illegal state. "
+            LOG.fatal("SaibloLocalJudger is existing due to unrecoverable illegal state. "
                       "Please check the log to find the reason.")
         else:
-            log.exception("SaibloLocalJudger crashed unexpectedly. Please report this issue.")
+            LOG.fatal("SaibloLocalJudger crashed unexpectedly. Please report this issue.")
+            sys.__excepthook__(exctype, value, traceback)
+        sys.exit(1)
 
     sys.excepthook = exception_handler
 
@@ -77,9 +78,9 @@ def main():
         "port": port,
         "player_count": player_count,
         "config": config,
-        "output": output,
-        "logic_path": logic_path,
+        "output": output_dir,
+        "logic_path": Path.cwd() / logic_path,
         "protocol_version": protocol_version
     }
-    log.info("Launching local judger with config[%s]", judger_config)
+    LOG.info("Launching local judger with config[%s]", judger_config)
     Judger(**judger_config).start()

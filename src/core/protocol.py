@@ -2,12 +2,11 @@ import functools
 import json
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Callable, Union, List, TypeVar
 
-from .logger import get_logger
+from .logger import LOG
 from .utils import int2bytes
-
-log = get_logger()
 
 
 @dataclass
@@ -47,7 +46,7 @@ def json_object_receiver(desc):
             def value(key: str) -> any:
                 v = json_obj.get(key)
                 if v is None:
-                    log.error("Missing [%s] in %s", key, desc)
+                    LOG.error("Missing [%s] in %s", key, desc)
                     raise ValueError
                 return v
 
@@ -96,12 +95,12 @@ class Protocol:
 
     @staticmethod
     @json_object_sender
-    def to_logic_init_info(player_list: List[int], config: object, replay_path: str) -> any:
+    def to_logic_init_info(player_list: List[int], config: object, replay_path: Path) -> any:
         return {
             "player_list": player_list,
             "player_num": len(player_list),
             "config": config,
-            "replay": replay_path
+            "replay": str(replay_path)
         }
 
     @staticmethod

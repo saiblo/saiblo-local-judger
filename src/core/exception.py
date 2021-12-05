@@ -6,3 +6,10 @@ class JudgerIllegalState(Exception):
     You can remind the user to check those useful debug information.
     """
     pass
+
+
+class StreamEOF(Exception):
+    """
+    Indicate the io stream is closed normally because read(size) method returned empty string.
+    """
+    pass
