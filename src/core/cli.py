@@ -76,7 +76,8 @@ def main():
 
     config = {
         "width": 16,
-        "height": 16
+        "height": 16,
+        "max_round": 100
     }
 
     judger_config = {
@@ -88,4 +89,6 @@ def main():
         "protocol_version": protocol_version
     }
     LOG.info("Launching local judger with config[%s]", judger_config)
-    Judger(**judger_config).start()
+    summary = Judger(**judger_config).start()
+    LOG.info("Judger existed. Summary:")
+    LOG.info("%s", summary)
