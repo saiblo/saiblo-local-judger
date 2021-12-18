@@ -69,7 +69,6 @@ class Judger:
             while True:
                 pack_size: int = bytes2int(await stdout.readexactly(4))
                 target: int = bytes2int(await stdout.readexactly(4))
-                LOG.debug("%d %d", pack_size, target)
                 data: bytes = await stdout.readexactly(pack_size)
                 LOG.debug("Logic is sending %d bytes of data to target %d: %s", pack_size, target, data)
                 asyncio.create_task(self.parse_logic_data(target, data))
@@ -248,7 +247,6 @@ class Judger:
                 if self.round_time_limit != message.time:
                     LOG.info("Reset round time limit to %s", message.time)
                     self.round_time_limit = message.time
-                self.check_state_change(message.state)
                 # We currently ignore length limit
             elif isinstance(message, RoundInfo):
                 LOG.info("Normal round information received")
