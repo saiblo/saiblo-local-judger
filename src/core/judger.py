@@ -224,7 +224,7 @@ class Judger:
             LOG.warning("AI %d listen timeout", timeout_ai)
             asyncio.create_task(
                 self.to_logic_msg.put(Protocol.to_logic_ai_error(timeout_ai, self.state, AiErrorType.TimeOutError)))
-            self.summary.appendAiTle(self.state, ai_id)
+            self.summary.appendAiTle(self.state, timeout_ai)
         elif self.game_running:
             LOG.warning("Timeout but no listen target set. This may be an internal bug.")
 
