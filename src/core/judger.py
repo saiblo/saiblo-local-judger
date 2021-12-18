@@ -1,10 +1,9 @@
 import asyncio
+import concurrent.futures
 import signal
 from asyncio import IncompleteReadError
 from pathlib import Path
-from typing import List, Optional
-
-import aiofiles
+from typing import List, Optional, IO
 
 from .exception import JudgerIllegalState
 from .logger import LOG
@@ -34,8 +33,9 @@ class Judger:
     output_limit: int
     state: int
     game_running: bool
-    server: Optional[asyncio.AbstractServer]
-    game_over_event: Optional[asyncio.Event]
+    server: asyncio.AbstractServer
+    shutdown_event: asyncio.Event
+    executor: concurrent.futures.ThreadPoolExecutor
 
     def __init__(self, **kwargs):
         def getValue(name):
@@ -61,7 +61,6 @@ class Judger:
         self.output_limit = 2048
         self.state = -1
         self.game_running = False
-        self.server = None
 
     # Logic Handlers
     async def handle_logic_stdout(self, stdout):
@@ -79,20 +78,23 @@ class Judger:
 
     async def handle_logic_stderr(self, stderr):
         LOG.info("Attached to Logic stderr")
+        loop = asyncio.get_event_loop()
         logic_stderr_path = self.output_dir / "logic_stderr.txt"
-        async with aiofiles.open(logic_stderr_path, "w") as trace_file:
-            LOG.debug("Logic stderr will also be logged into file: %s", logic_stderr_path)
-            try:
-                while True:
-                    line = await stderr.readline()
-                    if not line:
-                        break
-                    asyncio.create_task(trace_file.writelines([line.decode("utf-8")]))
-                    LOG.warning("Logic STDERR: %s", line)
-                LOG.info("Logic stderr disconnected normally.")
-            except:
-                if not self.game_over_event.is_set():
-                    LOG.warning("Logic stderr disconnected unexpectedly", exc_info=True)
+        trace_file: IO = await loop.run_in_executor(self.executor, lambda: open(logic_stderr_path, "w"))
+        LOG.debug("Logic stderr will also be logged into file: %s", logic_stderr_path)
+        try:
+            while True:
+                line = await stderr.readline()
+                if not line:
+                    break
+                loop.run_in_executor(self.executor, lambda: trace_file.writelines([line.decode("utf-8")]))
+                LOG.debug("Logic STDERR: %s", line)
+            LOG.info("Logic stderr disconnected normally.")
+        except:
+            if not self.shutdown_event.is_set():
+                LOG.warning("Logic stderr disconnected unexpectedly", exc_info=True)
+        finally:
+            loop.run_in_executor(self.executor, lambda: trace_file.close())
 
     async def send_to_logic_stdin(self, stdin):
         LOG.info("Attached to logic stdin")
@@ -281,21 +283,21 @@ class Judger:
         LOG.info("Judger server is running at %s", addrs)
         asyncio.create_task(server.serve_forever())
 
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="IO-Executor")
         self.server = server
-        self.game_over_event = asyncio.Event()
+        self.shutdown_event = asyncio.Event()
 
         loop = asyncio.get_event_loop()
         for s in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(s, lambda: asyncio.create_task(self.shutdown()))
 
-        await self.game_over_event.wait()
+        await self.shutdown_event.wait()
 
     def start(self):
-        # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
         asyncio.run(self.run())
         LOG.info("SaibloLocalJudger is closed")
 
     async def shutdown(self):
         LOG.info("SaibloLocalJudger is shutting down")
         self.server.close()
-        self.game_over_event.set()
+        self.shutdown_event.set()
