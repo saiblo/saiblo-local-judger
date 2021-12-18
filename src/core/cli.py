@@ -74,6 +74,11 @@ def main():
 
     sys.excepthook = exception_handler
 
+    config = {
+        "width": 16,
+        "height": 16
+    }
+
     judger_config = {
         "port": port,
         "player_count": player_count,

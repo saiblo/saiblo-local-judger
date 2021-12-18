@@ -1,10 +1,10 @@
 import asyncio
+import signal
 from asyncio import IncompleteReadError
 from pathlib import Path
 from typing import List, Optional
 
 import aiofiles
-import uvloop
 
 from .exception import JudgerIllegalState
 from .logger import LOG
@@ -34,7 +34,8 @@ class Judger:
     output_limit: int
     state: int
     game_running: bool
-    server: asyncio.AbstractServer
+    server: Optional[asyncio.AbstractServer]
+    game_over_event: Optional[asyncio.Event]
 
     def __init__(self, **kwargs):
         def getValue(name):
@@ -60,6 +61,7 @@ class Judger:
         self.output_limit = 2048
         self.state = -1
         self.game_running = False
+        self.server = None
 
     # Logic Handlers
     async def handle_logic_stdout(self, stdout):
@@ -71,7 +73,7 @@ class Judger:
                 LOG.debug("%d %d", pack_size, target)
                 data: bytes = await stdout.readexactly(pack_size)
                 LOG.debug("Logic is sending %d bytes of data to target %d: %s", pack_size, target, data)
-                await self.parse_logic_data(target, data)
+                asyncio.create_task(self.parse_logic_data(target, data))
         except IncompleteReadError:
             LOG.warning("Logic stream reached EOF.")
 
@@ -85,11 +87,12 @@ class Judger:
                     line = await stderr.readline()
                     if not line:
                         break
-                    await trace_file.writelines([line.decode("utf-8")])
+                    asyncio.create_task(trace_file.writelines([line.decode("utf-8")]))
                     LOG.warning("Logic STDERR: %s", line)
-                LOG.warning("Logic stderr disconnected normally. The logic process may have closed.")
+                LOG.info("Logic stderr disconnected normally.")
             except:
-                LOG.warning("Logic stderr disconnected unexpectedly", exc_info=True)
+                if not self.game_over_event.is_set():
+                    LOG.warning("Logic stderr disconnected unexpectedly", exc_info=True)
 
     async def send_to_logic_stdin(self, stdin):
         LOG.info("Attached to logic stdin")
@@ -108,7 +111,7 @@ class Judger:
                 LOG.warning("Logic exit normally before game over")
             else:
                 LOG.error("Logic crashed with exit code: %d", return_code)
-        await self.shutdown()
+        asyncio.create_task(self.shutdown())
 
     async def try_launch_logic(self):
         if self.next_ai_index < self.player_count:
@@ -131,13 +134,14 @@ class Judger:
                 self.config, self.replay_path
             )
         )
-        await asyncio.gather(
+
+        for task in [
             self.send_to_logic_stdin(self.logic_proc.stdin),
             self.handle_logic_stdout(self.logic_proc.stdout),
             self.handle_logic_stderr(self.logic_proc.stderr),
-            # self.wait_logic_exit(),
-            return_exceptions=True
-        )
+            self.wait_logic_exit(),
+        ]:
+            asyncio.create_task(task)
 
     # AI Handlers
     async def read_from_ai(self, reader: asyncio.StreamReader, ai_id: int):
@@ -147,7 +151,7 @@ class Judger:
                 pack_size: int = bytes2int(await reader.readexactly(4))
 
                 if pack_size > self.output_limit:
-                    await self.on_ai_ole(ai_id)
+                    self.on_ai_ole(ai_id)
                 else:
                     data: bytes = await reader.readexactly(pack_size)
                     LOG.debug("Received %d bytes of data from ai[id=%d]: %s", pack_size, ai_id, data)
@@ -157,11 +161,11 @@ class Judger:
                         LOG.info("Received data from listened ai. Forwarding to logic.")
                         elapsed_time = 1000 * (asyncio.get_running_loop().time() - self.round_begin_time)
                         data = Protocol.to_logic_ai_normal_message(ai_id, data.decode('utf-8'), elapsed_time)
-                        await self.to_logic_msg.put(data)
+                        asyncio.create_task(self.to_logic_msg.put(data))
         except IncompleteReadError:
             LOG.warning("Reader stream of AI[id=%d] is closed", ai_id)
             if self.game_running:
-                await self.on_ai_re(ai_id)
+                self.on_ai_re(ai_id)
 
     async def write_to_ai(self, writer: asyncio.StreamWriter, ai_id: int):
         LOG.info("Attached to AI[id=%d] writer", ai_id)
@@ -176,7 +180,7 @@ class Judger:
         await writer.wait_closed()
         LOG.warning("Writer stream of AI[id=%d] is closed", ai_id)
         if self.game_running:
-            await self.on_ai_re(ai_id)
+            self.on_ai_re(ai_id)
 
     async def handle_ai_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         LOG.info("A new AI is connected")
@@ -186,30 +190,32 @@ class Judger:
         self.next_ai_index = self.next_ai_index + 1
         self.to_ai_msg.append(asyncio.Queue())
 
-        await asyncio.gather(
+        for task in [
             self.try_launch_logic(),
             self.read_from_ai(reader, ai_id),
             self.write_to_ai(writer, ai_id),
             self.wait_ai_writer_closed(writer, ai_id),
-            return_exceptions=True
-        )
+        ]:
+            asyncio.create_task(task)
 
-    async def on_ai_ole(self, ai_id: int) -> None:
+    def on_ai_ole(self, ai_id: int) -> None:
         self.game_running = False
         LOG.warning("AI %d exceeded output limit %d", ai_id, self.output_limit)
-        await self.to_logic_msg.put(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.OutputLimitError))
+        asyncio.create_task(
+            self.to_logic_msg.put(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.OutputLimitError)))
 
-    async def on_ai_re(self, ai_id: int) -> None:
+    def on_ai_re(self, ai_id: int) -> None:
         self.game_running = False
         LOG.warning("AI %d disconnected unexpectedly", ai_id)
-        await self.to_logic_msg.put(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.RunError))
+        asyncio.create_task(self.to_logic_msg.put(Protocol.to_logic_ai_error(ai_id, self.state, AiErrorType.RunError)))
 
-    async def on_ai_tle(self) -> None:
+    def on_ai_tle(self) -> None:
         self.game_running = False
         if len(self.listen_target) > 0:
             timeout_ai = self.listen_target[0]
             LOG.warning("AI %d listen timeout", timeout_ai)
-            await self.to_logic_msg.put(Protocol.to_logic_ai_error(timeout_ai, self.state, AiErrorType.TimeOutError))
+            asyncio.create_task(
+                self.to_logic_msg.put(Protocol.to_logic_ai_error(timeout_ai, self.state, AiErrorType.TimeOutError)))
         elif self.game_running:
             LOG.warning("Timeout but no listen target set. This may be an internal bug.")
 
@@ -219,7 +225,7 @@ class Judger:
             if self.timer is not None:
                 self.timer.cancel()
             loop = asyncio.get_running_loop()
-            loop.call_later(self.round_time_limit, self.on_ai_tle)
+            self.timer = loop.call_later(self.round_time_limit, self.on_ai_tle)
             current_time = loop.time()
             if self.state == -1:
                 LOG.info("Enter next round %d", new_state)
@@ -253,43 +259,43 @@ class Judger:
                 self.listen_target = message.listen
                 LOG.info("Now listening on player %s", str(self.listen_target))
 
-                tasks: List[asyncio.Task] = []
                 for i in range(len(message.player)):
                     ai_id = message.player[i]
                     data = message.content[i].encode("utf-8")
-                    tasks.append(asyncio.create_task(self.to_ai_msg[ai_id].put(data)))
-                await asyncio.gather(*tasks)
+                    asyncio.create_task(self.to_ai_msg[ai_id].put(data))
             elif type(message) == list:
                 LOG.info("Game over. Result: %s", str(message))
-                await self.shutdown()
+                asyncio.create_task(self.shutdown())
             else:
                 LOG.error("Unrecognized logic data: %s. Ignoring.", data.decode("utf-8"))
         elif list(range(self.player_count)).count(target_id):
             LOG.info("Directly forwarding data to AI %d", target_id)
-            await self.to_ai_msg[target_id].put(data)
+            asyncio.create_task(self.to_ai_msg[target_id].put(data))
         else:
             LOG.error("Invalid target id %d. Ignoring.", target_id)
 
     # Main control
     async def run(self):
-        self.server = await asyncio.start_server(self.handle_ai_connection, self.host, self.port)
-        addrs = ', '.join(str(sock.getsockname()) for sock in self.server.sockets)
+        server = await asyncio.start_server(self.handle_ai_connection, self.host, self.port)
+        addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
         LOG.info("Judger server is running at %s", addrs)
-        async with self.server:
-            await self.server.serve_forever()
+        asyncio.create_task(server.serve_forever())
+
+        self.server = server
+        self.game_over_event = asyncio.Event()
+
+        loop = asyncio.get_event_loop()
+        for s in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(s, lambda: asyncio.create_task(self.shutdown()))
+
+        await self.game_over_event.wait()
 
     def start(self):
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
         asyncio.run(self.run())
+        LOG.info("SaibloLocalJudger is closed")
 
     async def shutdown(self):
-        LOG.info("Judger server is shutting down")
-        self.game_running = False
-        if self.timer is not None:
-            self.timer.cancel()
-        self.logic_proc.terminate()
+        LOG.info("SaibloLocalJudger is shutting down")
         self.server.close()
-        await asyncio.gather(
-            self.logic_proc.wait(),
-            self.server.wait_closed()
-        )
+        self.game_over_event.set()
