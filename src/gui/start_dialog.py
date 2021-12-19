@@ -1,4 +1,5 @@
 import json
+import random
 from pathlib import Path
 
 from PySide6.QtCore import Slot
@@ -86,7 +87,11 @@ class StartDialog(QDialog):
             QMessageBox.critical(self, "输入无效", "逻辑启动脚本不存在")
             return
 
-        output_path = Path(self.output_path.text())
+        if len(self.output_path.text()) == 0:
+            output = "res-{:010d}".format(random.randrange(0, 10000000000))
+            output_path = Path.cwd() / output
+        else:
+            output_path = Path(self.output_path.text())
         try:
             output_path.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -94,7 +99,7 @@ class StartDialog(QDialog):
             return
 
         if len(self.config_path.text()) == 0:
-            config = None
+            config = {}
         else:
             config_path = Path(self.config_path)
             if not config_path.exists() or not config_path.is_file():
@@ -119,6 +124,7 @@ class StartDialog(QDialog):
             "logic_path": Path.cwd() / logic_path,
             "protocol_version": 1
         }
+        glob_var.judger_config = judger_config
         glob_var.judger = Judger(**judger_config)
         self.accept()
 
@@ -131,8 +137,7 @@ class StartDialog(QDialog):
     @Slot()
     def browseForOutputPath(self):
         dir_name = QFileDialog.getExistingDirectory(self, "选择输出目录", options=QFileDialog.ShowDirsOnly)
-        if len(dir_name) == 2:
-            self.output_path.setText(dir_name[0])
+        self.output_path.setText(dir_name)
 
     @Slot()
     def browseForConfigFile(self):
