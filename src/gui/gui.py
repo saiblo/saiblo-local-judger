@@ -38,3 +38,7 @@ class Main(QObject):
     @Slot()
     def closeApp(self):
         self.app.quit()
+
+
+def main():
+    Main()

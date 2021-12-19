@@ -343,7 +343,6 @@ class Judger:
         return summary
 
     def shutdown(self):
-        asyncio.set_event_loop_policy(asyncio.AbstractEventLoopPolicy)
         asyncio.create_task(self.__shutdown())
 
     async def __shutdown(self):
