@@ -101,7 +101,7 @@ class StartDialog(QDialog):
         if len(self.config_path.text()) == 0:
             config = {}
         else:
-            config_path = Path(self.config_path)
+            config_path = Path(self.config_path.text())
             if not config_path.exists() or not config_path.is_file():
                 QMessageBox.critical(self, "输入无效", "对局配置文件不存在")
                 return

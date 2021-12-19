@@ -29,7 +29,7 @@ class RunningDialog(QDialog):
 
     def __init__(self):
         super().__init__()
-        self.setFixedSize(600, 350)
+        self.setFixedSize(450, 200)
 
         # States
         self.listen_addr = None
@@ -74,7 +74,7 @@ class RunningDialog(QDialog):
     def launch_judger(self):
         glob_var.judger.set_event_handler(self.handle_judger_event)
         self.judger_runner = JudgerRunner()
-        self.judger_thread = QThread()
+        self.judger_thread = QThread(self)
         self.judger_thread.started.connect(self.judger_runner.run)
         self.judger_thread.finished.connect(self.judger_thread.deleteLater)
         self.judger_runner.moveToThread(self.judger_thread)
@@ -84,11 +84,15 @@ class RunningDialog(QDialog):
 
     @Slot()
     def judge_finished(self):
+        self.judger_thread.quit()
+        self.judger_thread.wait()
         self.accept()
 
     @Slot(Exception)
     def judge_crashed(self, e: Exception):
         QMessageBox.critical(self, "评测机异常退出", "评测机崩溃，请向Saiblo维护人员汇报此问题：\n" + str(e))
+        self.judger_thread.quit()
+        self.judger_thread.wait()
         self.reject()
 
     def handle_judger_event(self, **kwargs):
@@ -113,6 +117,7 @@ class RunningDialog(QDialog):
                 glob_var.judger.shutdown()
             except:
                 pass
+            self.judger_thread.quit()
             self.judger_thread.wait()
             event.accept()
         else:
@@ -129,6 +134,7 @@ class RunningDialog(QDialog):
             self.progress.setRange(0, 1)
             self.progress.setValue(1)
         else:
+            text[0] = "正在评测"
             text[1] = f"评测机监听地址：{self.listen_addr}"
             max_player_count = glob_var.judger_config["player_count"]
             if self.current_player_count < max_player_count:

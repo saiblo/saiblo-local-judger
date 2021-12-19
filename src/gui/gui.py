@@ -1,8 +1,9 @@
 import sys
 
 from PySide6.QtCore import QObject, Slot
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
+from . import glob_var
 from .running_dialog import RunningDialog
 from .start_dialog import StartDialog
 
@@ -10,8 +11,8 @@ from .start_dialog import StartDialog
 class Main(QObject):
     def __init__(self):
         super().__init__()
-
         self.app = QApplication(sys.argv)
+
         self.start_dialog = StartDialog()
         self.running_dialog = RunningDialog()
 
@@ -26,6 +27,7 @@ class Main(QObject):
 
     @Slot()
     def openStartDialog(self):
+        QMessageBox.information(None, "评测完成", f"评测完成\n请查看{glob_var.judger_config.get('output')}文件夹获取详细信息")
         self.start_dialog.open()
 
     @Slot()
