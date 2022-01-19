@@ -137,6 +137,7 @@ class Judger:
         LOG.info("The number of players is sufficient. LINK START!")
         self.logic_proc = await asyncio.create_subprocess_exec(
             str(self.logic_path),
+            cwd=self.logic_path.parent,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -245,10 +246,10 @@ class Judger:
     # Handle state change
     def check_state_change(self, new_state: int) -> None:
         if self.state != new_state:
-            if self.timer is not None:
-                self.timer.cancel()
+            # if self.timer is not None:
+            #     self.timer.cancel()
             loop = asyncio.get_running_loop()
-            self.timer = loop.call_later(self.round_time_limit, self.on_ai_tle)
+            # self.timer = loop.call_later(self.round_time_limit, self.on_ai_tle)
             current_time = loop.time()
             if self.state == -1:
                 elapsed_time = 0
@@ -269,9 +270,9 @@ class Judger:
             message = Protocol.from_logic_data(data)
             if isinstance(message, RoundConfig):
                 LOG.info("Round config received")
-                if self.round_time_limit != message.time:
-                    LOG.info("Reset round time limit to %s", message.time)
-                    self.round_time_limit = message.time
+                # if self.round_time_limit != message.time:
+                #     LOG.info("Reset round time limit to %s", message.time)
+                #     self.round_time_limit = message.time
                 # We currently ignore length limit
             elif isinstance(message, RoundInfo):
                 LOG.info("Normal round information received")
