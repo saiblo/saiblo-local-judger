@@ -13,7 +13,7 @@ version = "v0.0.1-alpha"
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="python -m core", description="CLI for SaibloLocalJudger Core")
+    parser = argparse.ArgumentParser(prog="judger-cli", description="CLI for SaibloLocalJudger Core")
     parser.add_argument("--port", type=int, help="Tcp server listening port. Default port is random.", default=0)
     parser.add_argument("--playerCount", type=int, help="Required. Count of players to start a game.")
     parser.add_argument("--configFile", type=str, help="Game config file.")
