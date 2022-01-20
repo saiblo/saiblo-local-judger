@@ -5,9 +5,9 @@ import sys
 from json import JSONDecodeError
 from pathlib import Path
 
-from .exception import JudgerIllegalState
-from .judger import Judger
-from .logger import LOG, set_log_output_file
+from core.exception import JudgerIllegalState
+from core.judger import Judger
+from core.logger import LOG, set_log_output_file
 
 version = "v0.0.1-alpha"
 
